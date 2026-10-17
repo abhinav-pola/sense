@@ -1,0 +1,20 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cdefddd62f9c71046d37839259bf745dd04a8cc483bdfeb5336a5e4f8d8a7ebf # shrinks to ops = [SignIn, SignIn, Process(0, false)]
+cc 26da80791aa0ac00bec10958bf826bee624b84cffbd61bdc243429f5ff49671f # shrinks to ops = [NewChat, NewChat, NewChat, NewChat, Submit(1), NewChat]
+cc c8812e2147ba1b9c900ac6f12177cbf8add46f3ab537789e58a486da0b883287 # shrinks to ops = [NewChat, SignIn]
+cc cf41cc690820663675c168cb5689e8c61bceee1f0aa025218f7df195dd1d924b # shrinks to ops = [NewChat, SetFolder(0), Submit(0), SetFolder(0)]
+cc 4fee0e474030a6474913c4ed303259fcaefb733f369b81c438868d160bf27cc7 # shrinks to ops = [SignIn, NewChat, Focus(0), Hang(0)]
+cc 679d362f380d682ce14efc7dad2ac6eb2bf5331e016f768dd25448666203582d # shrinks to ops = [NewChat, SignIn, Focus(0), Crash(0), Process(0, false)]
+cc 1ca29f3728c05b624cc431815f4632f424f9c8931ad9742c0fcaf849daa1e33c # shrinks to ops = [SignIn, NewChat, Submit(0), Process(0, false), Baseline(0, true), Deliver(0), Delete(0)]
+cc c3e66dd5a880a686362faf55d967d0f98ea86b66bf5c69267c8cb5a85699d445 # shrinks to ops = [NewChat, SignIn, NewChat, Submit(0), Process(0, false), Deliver(0), Process(0, true), Process(0, false)]
+cc da6e9524ee2c7dd28e823f9190ec420f90d648897164a87fd562ef57169c28e0 # shrinks to ops = [NewChat, SignIn, Submit(0), Process(0, false), Deliver(0), SignOut]
+cc 64113a41984b99ae87fc58f102d1b550d5dcd15a9b5e0f58982f946ee512f3ca # shrinks to ops = [SignIn, NewChat, Submit(0), NewChat, Crash(0), Deliver(0), Focus(0)]
+cc 8ae8b43ec3a31c6e873b8271b46920a4d1916ad4f6fc1338ec26ad07f460f91b # shrinks to ops = [NewChat, NewChat, SignIn, Focus(0), Delete(0), Submit(0), Baseline(0, true), Process(1, false), Deliver(0), Delete(0)]
+cc 57f008d07278155a4e0d5a533b18889ca93906a9af2fef79f37cf9ed864fc118 # shrinks to ops = [NewChat, SignIn, NewChat, NewChat, NewChat, NewChat, Submit(0), Baseline(0, false)]
+cc a83fd6ce2b1d453f6a21fe87a94b22f3402cca2dc2938a14022c5f78c7561016 # shrinks to ops = [NewChat, NewChat, Restore, Submit(2), SignIn, NewChat, Process(0, true), NewChat, Process(0, false), Process(0, false)]
+cc 0515938c2b9d7ed7b2325f09d8401680d80b593ad55e3944839b100a4fb80682 # shrinks to ops = [NewChat, Submit(0), SignIn, Crash(0), Deliver(0), Focus(0)]

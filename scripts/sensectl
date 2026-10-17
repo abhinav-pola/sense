@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Send one automation command to a running Sense: sensectl '{"cmd":"state"}'"""
+import os, socket, sys
+
+path = os.environ.get("SENSE_AUTOMATION", "/tmp/sense-automation.sock")
+with socket.socket(socket.AF_UNIX) as sock:
+    sock.connect(path)
+    sock.sendall(sys.argv[1].encode() + b"\n")
+    print(sock.makefile().readline().strip())

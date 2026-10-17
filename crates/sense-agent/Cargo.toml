@@ -1,0 +1,17 @@
+[package]
+name = "sense-agent"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+agent-client-protocol = { workspace = true, features = ["process", "unstable_subagents"] }
+anyhow.workspace = true
+async-channel = "2.5.0"
+base64 = "0.23.1"
+futures = "0.3.34"
+piper = "0.2.5"
+serde_json.workspace = true
+smol = "2.0.2"
+
+[lints]
+workspace = true

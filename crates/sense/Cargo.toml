@@ -1,0 +1,31 @@
+[package]
+name = "sense"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+gpui-kit.workspace = true
+sense-agent.workspace = true
+sense-auth.workspace = true
+serde_json.workspace = true
+similar = "3.2.0"
+# The formats gpui already decodes, so no more of the crate gets built.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+async-channel = "2.5.0"
+ureq = { version = "3.4.2", features = ["json"] }
+sense-core.workspace = true
+base64 = "0.23.1"
+serde = { workspace = true, features = ["derive"] }
+
+[features]
+# Local control socket and window capture, for agent-driven testing. Never in release.
+automation = ["gpui-kit/test-support"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = "1.12.0"
+

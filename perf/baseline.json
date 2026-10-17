@@ -1,0 +1,10 @@
+{
+  "startup_binary_ms": {
+    "median": 141.8856045,
+    "stddev": 6.327703720723909
+  },
+  "startup_bundle_ms": {
+    "median": 268.53618750000004,
+    "stddev": 19.53255587698671
+  }
+}

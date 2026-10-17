@@ -1,0 +1,40 @@
+#!/bin/sh
+# Everything CI would run, on this machine. usage: scripts/check [--no-perf]
+set -eu
+cd "$(dirname "$0")/.."
+
+step() { printf '\n== %s\n' "$1"; }
+
+step "format"
+cargo fmt --all --check
+
+step "lint"
+cargo clippy -q --workspace --all-targets -- -D warnings
+cargo clippy -q --workspace --all-targets --features sense/automation -- -D warnings
+
+step "unit and replay tests"
+cargo test -q --workspace 2>&1 | grep -E "^test result|FAILED|panicked" || true
+cargo test -q --workspace >/dev/null
+
+step "model checking (TLA+)"
+if [ -x .toolchain/jdk/Contents/Home/bin/java ]; then
+    ./specs/check.sh
+else
+    echo "skipped: no repo-local JDK (see specs/README.md)"
+fi
+
+step "end-to-end flows (offline replay)"
+cargo build -q -p sense --features automation
+./scripts/e2e.py
+
+if [ "${1:-}" != "--no-perf" ]; then
+    step "startup performance"
+    cargo build -q --release -p sense
+    ./scripts/bundle.sh >/dev/null
+    ./scripts/perf.py
+
+    step "interaction latency"
+    ./scripts/perf-ux.py
+fi
+
+printf '\nall checks passed\n'

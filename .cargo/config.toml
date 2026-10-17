@@ -1,0 +1,10 @@
+[alias]
+# `cargo app`: an optimized build (the `fast` profile: rebuilt in seconds,
+# starts as fast as release), launched from this terminal so it sees
+# OPENROUTER_API_KEY.
+app = "run --profile fast -p sense"
+
+# The only future-incompatibility note comes from `block` 0.1.6, a transitive
+# dependency of gpui that this workspace can't change.
+[future-incompat-report]
+frequency = "never"

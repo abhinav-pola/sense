@@ -1,0 +1,9 @@
+#!/bin/sh
+# Refreshes the model list built into the app (crates/sense/assets/models.json),
+# which it shows until the user first refreshes in the app. The build never
+# goes to the network: run this and commit the result instead.
+set -eu
+cd "$(dirname "$0")/.."
+url='https://openrouter.ai/api/v1/models?output_modalities=text&input_modalities=text,image&context=1000000&max_age_days=150'
+curl -fsS "$url" -o crates/sense/assets/models.json
+python3 -c "import json,sys; d=json.load(open('crates/sense/assets/models.json')); print(len(d['data']), 'models')"

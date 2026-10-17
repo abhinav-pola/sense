@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 718d1a40fdaccc8dbfb9bd354a167985507199f0516264ebf63486579ed66cf2 # shrinks to held = "®￼®𝔇ᎀ0 🝻A00a0￼a  A®0￼\u{1920}®0A0a¡࿎a   𝔻 ෘa 0ጒa0🠀0𐄷 🌀\u{ac7}ⶨ®0aἘ🌀 a A ί𐞳%ⁱⷞ𖼚🕴-𑼏𑍌iₕZÊ,⋇𐞁ⷁ〡𜰍\\ஞ/Ⱥᥰ%#<𖪺ꡆ%⸛\"�𖾜L&#*𞟷wጒ𑱐:pY*Ζ꒲.`𑿙ൽ\u{1cf0c}\u{1cf18}*\"\u{2000}%{োDM$<:\\.ሹ¦𐨐3𐧿9=j𘱓𰇳/\u{113c9}:𐠈c�࿐🉢BG¥Ⱥ🕴]e𐻄𐌆$\"s🗘¥7H𖵦ᝰ/ãங𑤉/\u{f9e}ꢶ7Ⱥⷋ\\%�<🕴Ｆ.{ⁱ\"Ѩ'&Ⱥ)\u{10a06}t,'s_quௐ.oѨÄȺ<*𮵖!𐨕%Nؽ࠽ກ¹𐀄<.W\"0&,:/\u{16f90}Ꜻ௧⑃𞸡꣒\u{618}EcȺcd𐖳\u{a01}HȺ𛇬ᦚ{ᤶ´y0ѨἾ:�/&\u{ece}\\𞹏:P𞓞ఁ꯵S�dRໜP𞹑=<\u{ce3}V�aૐI$A¹*ΑG'ὓ\u{ac7}🭕𐌘v🕴𑎀%ÉMﬁM\u{1da9e}$Dꟓd\\𑋀z?𞗲<$K4𛰴?k{U/סּ<𞣍\u{2029}\u{5b7}ዘ=?ý\u{16f92}ﮖv𖄆x🢚ো\"அ(ꬂ�𐨕{𐨯¥í=\u{ae3}𑎇~Nⴝr<🕴hR<{*𑼈Cढ/𐴀<𐮀�Ⱥ𫞂🕴`ｕf&v𑽏🢡\u{1da9c}ת.𝄃\u{a02}ⴹⴧ"
