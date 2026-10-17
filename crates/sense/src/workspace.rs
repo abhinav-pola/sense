@@ -2277,10 +2277,12 @@ impl Workspace {
                         canvas(
                             |_, _, _| (),
                             move |bounds, _, window, _| {
-                                let x = bounds.left() + px(14.);
-                                let mid = bounds.top() + bounds.size.height / 2.;
+                                // A 1px stroke on half-pixel centers covers
+                                // whole device pixels: no anti-aliased blur.
+                                let x = (bounds.left() + px(14.)).floor() + px(0.5);
+                                let mid = (bounds.top() + bounds.size.height / 2.).floor() + px(0.5);
                                 let radius = px(8.);
-                                let mut path = PathBuilder::stroke(px(1.5));
+                                let mut path = PathBuilder::stroke(px(1.));
                                 path.move_to(point(x, bounds.top() - px(2.)));
                                 path.line_to(point(x, mid - radius));
                                 path.curve_to(point(x + radius, mid), point(x, mid));
@@ -2289,7 +2291,7 @@ impl Workspace {
                                     window.paint_path(path, line);
                                 }
                                 if continues {
-                                    let mut rest = PathBuilder::stroke(px(1.5));
+                                    let mut rest = PathBuilder::stroke(px(1.));
                                     rest.move_to(point(x, mid - radius));
                                     rest.line_to(point(x, bounds.bottom() + px(2.)));
                                     if let Ok(rest) = rest.build() {
