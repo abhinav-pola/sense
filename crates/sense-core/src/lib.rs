@@ -110,6 +110,11 @@ pub enum Input {
         chat: ChatId,
         error: Option<String>,
     },
+    /// The tools agents start with changed (the MCP servers configured, or
+    /// one signed in to). fx reads them when a session starts or resumes, so
+    /// every agent running now is out of date: each is stopped once its chat
+    /// is idle, and the next prompt resumes the session in a fresh one.
+    ToolsChanged,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -225,6 +230,8 @@ pub struct Lifecycle {
     /// meanwhile just waits for it.
     signed_out: bool,
     next_agent: AgentId,
+    /// Agents numbered up to this started before the tools last changed.
+    stale_through: AgentId,
 }
 
 impl Lifecycle {
@@ -369,6 +376,7 @@ impl Lifecycle {
                     // Not yet with the agent: nothing to cancel there.
                     _ => chat.turn = Turn::Idle,
                 }
+                self.retire_if_stale(id, &mut effects);
             }
             Input::DeleteChat { chat: id } => {
                 let Some(chat) = self.chats.remove(&id) else {
@@ -436,6 +444,8 @@ impl Lifecycle {
                     chat.session = Some(session);
                 }
                 self.advance(id, &mut effects);
+                // Stopped while the session was being made.
+                self.retire_if_stale(id, &mut effects);
             }
             Input::SessionFailed {
                 chat: id, error, ..
@@ -449,6 +459,7 @@ impl Lifecycle {
                         message: Notice::SessionFailed(error),
                     });
                 }
+                self.retire_if_stale(id, &mut effects);
             }
             Input::TurnEnded { agent, error, .. } => {
                 let id = self.chat_of_agent(agent).expect("checked by is_current");
@@ -464,6 +475,14 @@ impl Lifecycle {
                 }
                 if chat.baseline == Baseline::Ready {
                     effects.push(Effect::RefreshDiff { chat: id });
+                }
+                self.retire_if_stale(id, &mut effects);
+            }
+            Input::ToolsChanged => {
+                self.stale_through = self.next_agent;
+                let ids: Vec<_> = self.chats.keys().copied().collect();
+                for id in ids {
+                    self.retire_if_stale(id, &mut effects);
                 }
             }
             Input::ToolFinished { agent, .. } => {
@@ -609,6 +628,23 @@ impl Lifecycle {
                 chat.creating = true;
             }
             None => {}
+        }
+    }
+
+    /// Stops the chat's agent if it started before the tools last changed and
+    /// nothing is under way with it: no turn, and no session being made,
+    /// whose answer would be lost. Its next prompt starts a fresh one.
+    fn retire_if_stale(&mut self, id: ChatId, effects: &mut Vec<Effect>) {
+        let Some(chat) = self.chats.get_mut(&id) else {
+            return;
+        };
+        if let Some(agent) = chat.agent
+            && agent <= self.stale_through
+            && chat.turn == Turn::Idle
+            && !chat.creating
+        {
+            effects.push(Effect::StopAgent { agent });
+            chat.agent = None;
         }
     }
 

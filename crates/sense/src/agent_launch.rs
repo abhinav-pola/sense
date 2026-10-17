@@ -91,7 +91,7 @@ pub fn replay_launch() -> Option<Launch> {
 }
 
 /// `SENSE_FX` wins; otherwise the vendored build next to the workspace.
-fn fx_binary() -> Option<PathBuf> {
+pub fn fx_binary() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SENSE_FX") {
         return Some(path.into());
     }

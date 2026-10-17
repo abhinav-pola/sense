@@ -294,6 +294,19 @@ fn recorder(
     })
 }
 
+/// Asks fx to add the user's MCP servers (`~/.fx/mcp.json`, the connectors)
+/// to a session it creates or resumes; without it an ACP session gets only
+/// the client's own and approved project servers. fx reads the file then, so
+/// a session picks up a changed file when it next resumes.
+fn profile_mcp_servers() -> acp::Meta {
+    let mut meta = acp::Meta::new();
+    meta.insert(
+        "fx".into(),
+        serde_json::json!({ "profileMcpServers": true }),
+    );
+    meta
+}
+
 async fn serve(
     transport: impl ConnectTo<Client> + 'static,
     commands: Receiver<Command>,
@@ -409,7 +422,7 @@ async fn serve(
                         let models = models.clone();
                         let launch_model = launch_model.clone();
                         connection.spawn(async move {
-                            let request = NewSessionRequest::new(cwd);
+                            let request = NewSessionRequest::new(cwd).meta(profile_mcp_servers());
                             match connection_for_task.send_request(request).block_task().await {
                                 Ok(response) => {
                                     known
@@ -452,7 +465,8 @@ async fn serve(
                                 .unwrap_or_else(|err| err.into_inner())
                                 .insert(session.clone());
                             if unseen {
-                                let resume = ResumeSessionRequest::new(session.clone(), cwd);
+                                let resume = ResumeSessionRequest::new(session.clone(), cwd)
+                                    .meta(profile_mcp_servers());
                                 if let Err(err) =
                                     connection_for_task.send_request(resume).block_task().await
                                 {

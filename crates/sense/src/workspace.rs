@@ -186,6 +186,19 @@ pub struct Workspace {
     text_size_badge: Option<(f32, std::time::Instant)>,
     /// A right-clicked link's menu, while it's open.
     link_menu: Option<crate::link_menu::LinkMenu>,
+    /// The MCP servers in `~/.fx/mcp.json` and what each is doing, as last
+    /// checked; see `connectors`.
+    connectors: Vec<crate::connectors::Server>,
+    /// The file's text when last read, to notice it change, and whether it
+    /// has been read yet.
+    connectors_file: Option<String>,
+    connectors_seen: bool,
+    /// A check is under way; `connectors_recheck` asks for another after it,
+    /// for a change that came in meanwhile.
+    checking_connectors: bool,
+    connectors_recheck: bool,
+    /// The server being signed in to, while the browser is out.
+    signing_in: Option<String>,
     /// The settings menu's search for the default model.
     default_picker: Entity<crate::model_picker::ModelPicker>,
     default_picker_open: bool,
@@ -249,6 +262,12 @@ impl Workspace {
             panel_open: false,
             text_size_badge: None,
             link_menu: None,
+            connectors: Vec::new(),
+            connectors_file: None,
+            connectors_seen: false,
+            checking_connectors: false,
+            connectors_recheck: false,
+            signing_in: None,
             hovered: None,
             status_tick: None,
             status_shown: None,
@@ -371,6 +390,25 @@ impl Workspace {
             });
         });
         this._tasks.push(load);
+        if !benchmarking {
+            let watch = cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    let text = cx
+                        .background_spawn(async { crate::connectors::read_config() })
+                        .await;
+                    let alive = this.update_in(cx, |this, window, cx| {
+                        this.connectors_read(text, window, cx)
+                    });
+                    if alive.is_err() {
+                        return;
+                    }
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(1))
+                        .await;
+                }
+            });
+            this._tasks.push(watch);
+        }
         this._tasks.push(saver);
         #[cfg(feature = "automation")]
         if let Some(requests) = crate::automation::listen() {
@@ -460,6 +498,7 @@ impl Workspace {
                 "models": { "count": self.models.len(), "refreshing": self.refreshing_models },
                 "dark": cx.theme().mode.is_dark(),
                 "text_size_badge": self.text_size_badge.map(|(size, _)| size),
+                "connectors": self.connectors.iter().map(|server| server.label()).collect::<Vec<_>>(),
                 "link_menu": self.link_menu.as_ref().map(|menu| {
                     let at = menu.position();
                     [f32::from(at.x), f32::from(at.y)]
@@ -759,6 +798,124 @@ impl Workspace {
         }
         self.focus_active(window, cx);
         cx.notify();
+    }
+
+    /// The connectors file as just read. The first read only checks the
+    /// servers; a change after that also has every chat's agent replaced
+    /// once it's idle, since fx reads the file when a session resumes.
+    fn connectors_read(
+        &mut self,
+        text: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self.connectors_seen;
+        if changed && text == self.connectors_file {
+            return;
+        }
+        self.connectors_seen = true;
+        self.connectors_file = text;
+        if changed {
+            self.tools_changed(window, cx);
+        }
+        self.check_connectors(cx);
+    }
+
+    /// The tools agents start with changed: running agents are replaced as
+    /// their chats go idle, and the open chat's is started again right away.
+    fn tools_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dispatch(Input::ToolsChanged, window, cx);
+        self.focus_active(window, cx);
+    }
+
+    /// Asks fx what each connector is doing, in the background: it connects
+    /// to each, so this takes a moment.
+    fn check_connectors(&mut self, cx: &mut Context<Self>) {
+        if self.checking_connectors {
+            self.connectors_recheck = true;
+            return;
+        }
+        if self.connectors_file.is_none() {
+            self.connectors.clear();
+            cx.notify();
+            return;
+        }
+        let Some(fx) = crate::agent_launch::fx_binary() else {
+            return;
+        };
+        self.checking_connectors = true;
+        cx.notify();
+        // Started here, on the main thread, and only waited for in the
+        // background.
+        let running = crate::connectors::status(&fx);
+        let task = cx.spawn(async move |this, cx| {
+            let checked = cx
+                .background_spawn(async move { crate::connectors::finish_status(running?) })
+                .await;
+            _ = this.update(cx, |this, cx| {
+                this.checking_connectors = false;
+                match checked {
+                    Ok(servers) => this.connectors = servers,
+                    Err(err) => {
+                        this.notify_active(&format!("Couldn't check connectors: {err:#}"), cx)
+                    }
+                }
+                if std::mem::take(&mut this.connectors_recheck) {
+                    this.check_connectors(cx);
+                }
+                cx.notify();
+            });
+        });
+        self._tasks.push(task);
+    }
+
+    /// Signs in to a connector: fx opens the browser and waits for it.
+    fn sign_in_connector(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.signing_in.is_some() {
+            return;
+        }
+        let Some(fx) = crate::agent_launch::fx_binary() else {
+            return;
+        };
+        self.signing_in = Some(name.clone());
+        cx.notify();
+        // Started here, on the main thread; see `connectors`.
+        let running = crate::connectors::sign_in(&fx, &name);
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let signed_in = cx
+                .background_spawn(async move { crate::connectors::finish_sign_in(running?) })
+                .await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.signing_in = None;
+                match signed_in {
+                    // Sessions connected to it before the sign-in did so
+                    // without it.
+                    Ok(()) => this.tools_changed(window, cx),
+                    Err(err) => {
+                        this.notify_active(&format!("Couldn't sign in to {name}: {err:#}"), cx)
+                    }
+                }
+                this.check_connectors(cx);
+                cx.notify();
+            });
+        });
+        self._tasks.push(task);
+    }
+
+    /// Opens `~/.fx/mcp.json` in the user's text editor, starting one if
+    /// there's none. Saving it is enough: the app notices.
+    fn edit_connectors(&mut self, cx: &mut Context<Self>) {
+        let opened = crate::connectors::ensure_config().and_then(|path| {
+            let status = std::process::Command::new("open")
+                .arg("-t")
+                .arg(&path)
+                .status()?;
+            anyhow::ensure!(status.success(), "open exited with {status}");
+            Ok(())
+        });
+        if let Err(err) = opened {
+            self.notify_active(&format!("Couldn't open the connectors file: {err:#}"), cx);
+        }
     }
 
     /// Warms the open chat's agent so its startup overlaps the user typing.
@@ -2474,6 +2631,10 @@ impl Workspace {
         let models = self.models.clone();
         let default = self.default_model();
         let model_count = self.models.len();
+        let connectors = self.connectors.clone();
+        let checking_connectors = self.checking_connectors;
+        let signing_in = self.signing_in.clone();
+        let has_connectors_file = self.connectors_file.is_some();
         let view = cx.entity();
         let account_menu = Button::new("account")
             .ghost()
@@ -2515,6 +2676,54 @@ impl Workspace {
                     )
                 })
                 .separator();
+                // The MCP servers in `~/.fx/mcp.json`; see `connectors`.
+                let menu = menu.label(if checking_connectors {
+                    "Connectors · checking…"
+                } else {
+                    "Connectors"
+                });
+                let menu = connectors.iter().fold(menu, |menu, server| {
+                    use crate::connectors::Status;
+                    let view = view.clone();
+                    let name = server.name.clone();
+                    let this_one = signing_in.as_deref() == Some(name.as_str());
+                    let label = if this_one {
+                        format!("{name} · signing in…")
+                    } else {
+                        server.label()
+                    };
+                    let item = PopupMenuItem::new(label);
+                    match &server.status {
+                        Status::NeedsSignIn => menu.item(
+                            item.disabled(signing_in.is_some())
+                                .on_click(move |_, window, cx| {
+                                    let name = name.clone();
+                                    view.update(cx, |this, cx| {
+                                        this.sign_in_connector(name, window, cx)
+                                    })
+                                }),
+                        ),
+                        Status::Failed(reason) => {
+                            let reason = format!("{name}: {reason}");
+                            menu.item(item.on_click(move |_, _, cx| {
+                                view.update(cx, |this, cx| this.notify_active(&reason, cx))
+                            }))
+                        }
+                        _ => menu.item(item.disabled(true)),
+                    }
+                });
+                let menu = {
+                    let view = view.clone();
+                    let label = if has_connectors_file {
+                        "Edit connectors…"
+                    } else {
+                        "Add connectors…"
+                    };
+                    menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        view.update(cx, |this, cx| this.edit_connectors(cx))
+                    }))
+                    .separator()
+                };
                 // Fetched only when asked, in the background.
                 let menu = {
                     let view = view.clone();

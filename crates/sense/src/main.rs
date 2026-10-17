@@ -2,6 +2,7 @@ mod agent_launch;
 #[cfg(feature = "automation")]
 mod automation;
 mod chat;
+mod connectors;
 mod fuzzy;
 mod graph;
 mod library;

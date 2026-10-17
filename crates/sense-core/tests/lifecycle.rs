@@ -35,6 +35,8 @@ enum Op {
     /// The oldest undelivered event of some agent reaches the app.
     Deliver(usize),
     Baseline(usize, bool),
+    /// The configured MCP servers changed.
+    ToolsChanged,
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -54,6 +56,7 @@ fn op() -> impl Strategy<Value = Op> {
         1 => (0..8usize).prop_map(Op::Crash),
         9 => (0..8usize).prop_map(Op::Deliver),
         2 => (0..4usize, proptest::bool::weighted(0.8)).prop_map(|(c, ok)| Op::Baseline(c, ok)),
+        1 => Just(Op::ToolsChanged),
     ]
 }
 
@@ -98,6 +101,8 @@ struct World {
     credential: Option<String>,
     known_signed_out: bool,
     sign_ins: u32,
+    /// Agents that were running when the tools last changed.
+    stale: BTreeSet<AgentId>,
 }
 
 impl World {
@@ -158,6 +163,23 @@ impl World {
             prop_assert_eq!(&self.life, &before, "stale {:?} changed state", input);
         }
         self.check_input(&input, &before, &effects)?;
+        for effect in &effects {
+            if let Effect::Send {
+                agent,
+                command: Command::Prompt { .. },
+            } = effect
+                && self.stale.contains(agent)
+            {
+                // Only the agent that made the session this step may still
+                // carry its first prompt: stopping it would lose the session.
+                let chat = self.owner[agent];
+                prop_assert!(
+                    before.chat(chat).is_some_and(|c| c.session.is_none()),
+                    "a prompt went to agent {} from before the tools changed",
+                    agent
+                );
+            }
+        }
         for effect in effects {
             self.effect(effect)?;
         }
@@ -176,6 +198,20 @@ impl World {
                     self.credential.as_ref(),
                     "chat {}'s agent uses an old key",
                     chat
+                );
+            }
+        }
+        for (chat, state) in self.life.chats() {
+            if let Some(agent) = state.agent
+                && self.stale.contains(&agent)
+                && state.session.is_some()
+                && state.turn == Turn::Idle
+            {
+                prop_assert!(
+                    false,
+                    "idle chat {} kept agent {} from before the tools changed",
+                    chat,
+                    agent
                 );
             }
         }
@@ -593,6 +629,10 @@ impl World {
                 self.credential = None;
                 self.known_signed_out = true;
                 self.input(Input::SignedOut)
+            }
+            Op::ToolsChanged => {
+                self.stale.extend(self.owner.keys().copied());
+                self.input(Input::ToolsChanged)
             }
             Op::Process(ix, fail) => {
                 if let Some(agent) = self.live_agent(ix) {
