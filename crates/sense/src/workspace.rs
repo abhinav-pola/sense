@@ -184,6 +184,8 @@ pub struct Workspace {
     panel_open: bool,
     /// The text size just changed to, and when: shown briefly.
     text_size_badge: Option<(f32, std::time::Instant)>,
+    /// A right-clicked link's menu, while it's open.
+    link_menu: Option<crate::link_menu::LinkMenu>,
     /// The settings menu's search for the default model.
     default_picker: Entity<crate::model_picker::ModelPicker>,
     default_picker_open: bool,
@@ -246,6 +248,7 @@ impl Workspace {
             panel: cx.new(RightPanel::new),
             panel_open: false,
             text_size_badge: None,
+            link_menu: None,
             hovered: None,
             status_tick: None,
             status_shown: None,
@@ -310,6 +313,36 @@ impl Workspace {
         // Following the system: its light/dark switch switches this too.
         cx.observe_window_appearance(window, |this, window, cx| this.apply_appearance(window, cx))
             .detach();
+        // A link right-clicked anywhere in the window opens its menu here.
+        cx.set_global(crate::link_menu::PendingLinkMenu::default());
+        cx.observe_global_in::<crate::link_menu::PendingLinkMenu>(
+            window,
+            |this: &mut Self, window, cx| {
+                // Taking it counts as a change and calls this again: read
+                // first, so that call finds nothing and stops.
+                if cx.global::<crate::link_menu::PendingLinkMenu>().0.is_none() {
+                    return;
+                }
+                let Some((url, at)) = cx
+                    .global_mut::<crate::link_menu::PendingLinkMenu>()
+                    .0
+                    .take()
+                else {
+                    return;
+                };
+                this.link_menu = Some(crate::link_menu::LinkMenu::open(
+                    url,
+                    at,
+                    window,
+                    cx,
+                    |this: &mut Self, _| {
+                        this.link_menu = None;
+                    },
+                ));
+                cx.notify();
+            },
+        )
+        .detach();
         // A text size change (cmd +/−) shows its size for a moment and is
         // kept for next time.
         cx.observe_global_in::<gpui_kit::component::Theme>(window, |this: &mut Self, _, cx| {
@@ -427,6 +460,10 @@ impl Workspace {
                 "models": { "count": self.models.len(), "refreshing": self.refreshing_models },
                 "dark": cx.theme().mode.is_dark(),
                 "text_size_badge": self.text_size_badge.map(|(size, _)| size),
+                "link_menu": self.link_menu.as_ref().map(|menu| {
+                    let at = menu.position();
+                    [f32::from(at.x), f32::from(at.y)]
+                }),
                 "preparing": chat.read(cx).preparing.as_ref().map(|reason| reason.to_string()),
                 "cwd": chat.read(cx).cwd,
                 "sidebar": self.sidebar_outline(cx),
@@ -2694,6 +2731,7 @@ impl Render for Workspace {
                 )
             })
             .children(self.text_size_badge(window))
+            .children(self.link_menu.as_ref().map(|menu| menu.render(window)))
             .child(
                 div().absolute().top(px(8.)).right(px(12.)).child(
                     Button::new("toggle-panel")
@@ -2764,6 +2802,11 @@ fn window_command(
                 px(command["y"].as_f64().unwrap_or(0.) as f32),
             );
             let modifiers = Modifiers::default();
+            // `"button": "right"` for a right click.
+            let button = match command["button"].as_str() {
+                Some("right") => MouseButton::Right,
+                _ => MouseButton::Left,
+            };
             let events = [
                 PlatformInput::MouseMove(MouseMoveEvent {
                     position,
@@ -2771,14 +2814,14 @@ fn window_command(
                     modifiers,
                 }),
                 PlatformInput::MouseDown(MouseDownEvent {
-                    button: MouseButton::Left,
+                    button,
                     position,
                     modifiers,
                     click_count: 1,
                     first_mouse: false,
                 }),
                 PlatformInput::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
+                    button,
                     position,
                     modifiers,
                     click_count: 1,

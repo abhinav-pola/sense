@@ -5,6 +5,7 @@ mod chat;
 mod fuzzy;
 mod graph;
 mod library;
+mod link_menu;
 mod math;
 mod model_picker;
 mod models;

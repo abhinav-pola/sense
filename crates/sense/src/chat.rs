@@ -196,6 +196,7 @@ fn copy_button(ix: usize, text: SharedString) -> impl IntoElement {
 pub fn markdown(state: &Entity<TextViewState>) -> TextView {
     TextView::new(state)
         .markdown_extensions(crate::math::extensions())
+        .on_link_click(crate::link_menu::on_link_click)
         .code_block_actions(|block, _, _| {
             let code = block.code();
             let id = {
