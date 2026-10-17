@@ -4,6 +4,7 @@ mod automation;
 mod chat;
 mod fuzzy;
 mod library;
+mod math;
 mod model_picker;
 mod models;
 mod panel;

@@ -18,6 +18,11 @@ ureq = { version = "3.4.2", features = ["json"] }
 sense-core.workspace = true
 base64 = "0.23.1"
 serde = { workspace = true, features = ["derive"] }
+# LaTeX math in markdown: parse, lay out and rasterize formulas (KaTeX fonts embedded).
+ratex-parser = "0.1.15"
+ratex-layout = "0.1.15"
+ratex-types = "0.1.15"
+ratex-render = { version = "0.1.15", features = ["embed-fonts"] }
 
 [features]
 # Local control socket and window capture, for agent-driven testing. Never in release.

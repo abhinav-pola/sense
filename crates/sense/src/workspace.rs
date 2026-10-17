@@ -358,6 +358,7 @@ impl Workspace {
                                 | "clipped"
                                 | "count_color"
                                 | "frame"
+                                | "math"
                         )
                     );
                     let started = std::time::Instant::now();
@@ -2723,6 +2724,11 @@ fn window_command(
         }
         // Nothing: with `timed`, the cost of drawing the current frame.
         "frame" => json!({ "ok": true }),
+        // The formulas drawn as images so far, after drawing the current frame.
+        "math" => {
+            window.draw(cx).clear(cx);
+            crate::math::automation_report()
+        }
         // A mouse drag from one point to another in steps, as a hand would
         // do it: press, move with the button held, release. Each step is
         // drawn before the next, so hit tests see the moved layout.

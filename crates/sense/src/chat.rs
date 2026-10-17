@@ -191,18 +191,21 @@ fn copy_button(ix: usize, text: SharedString) -> impl IntoElement {
         .child(Clipboard::new(("copy", ix)).value(text))
 }
 
-/// Markdown with a copy button on each code block, for the code alone.
+/// Markdown with LaTeX math and a copy button on each code block, for the
+/// code alone.
 pub fn markdown(state: &Entity<TextViewState>) -> TextView {
-    TextView::new(state).code_block_actions(|block, _, _| {
-        let code = block.code();
-        let id = {
-            use std::hash::{Hash as _, Hasher as _};
-            let mut hasher = std::hash::DefaultHasher::new();
-            code.hash(&mut hasher);
-            hasher.finish()
-        };
-        Clipboard::new(("copy-code", id as usize)).value(code)
-    })
+    TextView::new(state)
+        .markdown_extensions(crate::math::extensions())
+        .code_block_actions(|block, _, _| {
+            let code = block.code();
+            let id = {
+                use std::hash::{Hash as _, Hasher as _};
+                let mut hasher = std::hash::DefaultHasher::new();
+                code.hash(&mut hasher);
+                hasher.finish()
+            };
+            Clipboard::new(("copy-code", id as usize)).value(code)
+        })
 }
 
 /// How often held stream text is revealed: once a frame at 60 Hz.
@@ -1576,7 +1579,7 @@ impl ChatView {
             Entry::Thought(state, _) => row
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(TextView::new(state))
+                .child(TextView::new(state).markdown_extensions(crate::math::extensions()))
                 .into_any_element(),
             Entry::Tool { title, status, .. } => {
                 // A running tool spins: a still icon reads as stalled during

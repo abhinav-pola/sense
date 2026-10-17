@@ -66,11 +66,37 @@ def run(runs):
             timed(app, cmd="drag", **{"from": [260 + 10 * (i % 2), 400], "to": [270 - 10 * (i % 2), 400]}) / 11
             for i in range(runs)
         ])
-        rss = subprocess.run(["ps", "-o", "rss=", "-p", str(app.process.pid)], capture_output=True, text=True)
-        results["rss_mb"] = {"median": int(rss.stdout.strip()) / 1024}
+        results["rss_mb"] = {"median": rss_mb(app)}
+    finally:
+        app.close()
+
+    # Math: a reply of inline and display formulas streams in. Only frames that
+    # show new text are sampled, so the frames that typeset its formulas count.
+    app = e2e.App("math.jsonl", e2e.fresh_workspace("perf-ux-math"))
+    try:
+        app.send(cmd="type", text="What is a hertz?")
+        app.send(cmd="submit")
+        frames, shown = [], ""
+        while (s := app.state())["chat"]["busy"] or not s["chat"]["session"]:
+            ms = timed(app, cmd="frame")
+            reply = next((e["agent"] for e in reversed(s["chat"]["entries"]) if "agent" in e), "")
+            if reply != shown:
+                frames.append(ms)
+                shown = reply
+        assert len(frames) >= 10, f"only {len(frames)} streaming frames"
+        results["math_streaming_frame"] = summary(frames)
+        # Every text size step is a size no formula was drawn at, so each
+        # visible formula is typeset in the measured frame: the cost of first
+        # showing a chat full of math, as when opening one from the library.
+        results["math_first_raster"] = summary([timed(app, cmd="key", keys="cmd-=") for _ in range(12)])
     finally:
         app.close()
     return results
+
+
+def rss_mb(app):
+    rss = subprocess.run(["ps", "-o", "rss=", "-p", str(app.process.pid)], capture_output=True, text=True)
+    return int(rss.stdout.strip()) / 1024
 
 
 def main():
@@ -89,9 +115,9 @@ def main():
     for name, result in current.items():
         median = result["median"]
         if name == "rss_mb":
-            line = f"{name:16} {median:7.1f} MB"
+            line = f"{name:22} {median:7.1f} MB"
         else:
-            line = f"{name:16} {median:7.2f} ms  p95 {result['p95']:7.2f}"
+            line = f"{name:22} {median:7.2f} ms  p95 {result['p95']:7.2f}"
             if result["p95"] > BUDGET_MS:
                 failures.append(f"{name} p95 {result['p95']:.2f} ms misses the {BUDGET_MS} ms frame")
         if name in baseline:
@@ -99,6 +125,8 @@ def main():
             line += f"   baseline {base:7.2f} ({(median - base) / base:+.0%})"
             if median > base * (1 + (RSS_TOLERANCE if name == "rss_mb" else TOLERANCE)):
                 failures.append(f"{name} regressed: {median:.2f} vs baseline {base:.2f}")
+        elif baseline and not args.update_baseline:
+            failures.append(f"{name} has no baseline: run with --update-baseline and commit {BASELINE.relative_to(ROOT)}")
         print(line)
 
     if args.update_baseline and failures and not args.force:

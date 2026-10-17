@@ -417,6 +417,58 @@ def flow_code_copy():
         app.close()
 
 
+# Every formula in math.jsonl, as (LaTeX, display style). The thought's is
+# last; one-line `$$…$$` spans are display style like the fenced block.
+MATH = {
+    ("T", False), ("f = 1/T", False), (r"e^{i\pi} + 1 = 0", False),
+    (r"\text{1 Hz} = \frac{1}{\text{second}} = \text{1 s}^{-1}", True),
+    (r"R(\theta) = \begin{pmatrix} \cos\theta & -\sin\theta \\ \sin\theta & \cos\theta \end{pmatrix}", True),
+    (r"\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}", True),
+    (r"\omega = 2\pi f", False),
+}
+
+
+def flow_math():
+    """LaTeX in replies and thoughts is drawn as images: `$…$` inline, `$$…$$`
+    display. Prose dollars ("$5 and $10") stay text, and a `$$` block is only
+    typeset once its closing fence arrives. Showing the chat again reuses the
+    images; a new appearance draws every formula in the new ink."""
+    app = App("math.jsonl", fresh_workspace("math"))
+    try:
+        def drawn():
+            report = app.send(cmd="math")
+            return {(d["latex"].strip(), d["display"]) for d in report["drawn"]}, report
+
+        app.send(cmd="type", text="What is a hertz?")
+        app.send(cmd="submit")
+        wait_for(lambda: (e := app.state()["chat"]["entries"]) and e[-1].get("agent", "").endswith(r"\frac{1}{n^2} = "),
+                 "the reply to stop inside an open $$ block")
+        assert not any(r"\sum" in latex for latex, _ in drawn()[0]), "an unclosed $$ block was typeset"
+
+        state = wait_for(lambda: (s := app.state())["chat"]["session"] and not s["chat"]["busy"] and s, "the reply")
+        # The last text is parsed in the background: wait for it to be drawn.
+        wait_for(lambda: drawn()[0] == MATH, "every formula drawn")
+        formulas, report = drawn()
+        assert formulas == MATH, ("missing", MATH - formulas, "extra", formulas - MATH)
+        app.send(cmd="screenshot", path=str(OUT / "math.png"))
+
+        typeset = report["rasterized"]
+        app.send(cmd="new_chat")
+        app.send(cmd="select_chat", index=1)
+        assert app.state()["chat"]["entries"], "back on the chat with the formulas"
+        assert app.send(cmd="math")["rasterized"] == typeset, "showing the chat again typeset its formulas again"
+
+        app.send(cmd="appearance", choice="light" if state["dark"] else "dark")
+        inks = {}
+        for d in app.send(cmd="math")["drawn"]:
+            inks.setdefault(d["latex"].strip(), set()).add(d["color"])
+        # The reply's only: the thought is folded away once the turn ends.
+        stale = [latex for latex, _ in MATH if latex != r"\omega = 2\pi f" and len(inks.get(latex, ())) < 2]
+        assert not stale, f"not drawn in the new appearance's ink: {stale}"
+    finally:
+        app.close()
+
+
 def flow_queue():
     """Enter while the agent works queues the message (one at most) and it
     goes when the turn ends. Option+Up brings it back to the composer, with
@@ -1140,7 +1192,7 @@ def flow_projects():
         app.close()
 
 
-FLOWS = {"edit-file": flow_edit_file, "projects": flow_projects, "images": flow_images, "subagents": flow_subagents, "history-paging": flow_history_paging, "stop-mid-turn": flow_stop_mid_turn, "two-chats": flow_two_chats_at_once, "notices": flow_notices, "layout": flow_layout, "resize-panes": flow_resize_panes, "text-size": flow_text_size, "appearance": flow_appearance, "view": flow_view, "model": flow_model_picker, "code-copy": flow_code_copy, "queue": flow_queue, "status": flow_thread_status, "projects-only": flow_threads_live_in_projects, "sign-out-and-in": flow_sign_out_and_in}
+FLOWS = {"edit-file": flow_edit_file, "projects": flow_projects, "images": flow_images, "subagents": flow_subagents, "history-paging": flow_history_paging, "stop-mid-turn": flow_stop_mid_turn, "two-chats": flow_two_chats_at_once, "notices": flow_notices, "layout": flow_layout, "resize-panes": flow_resize_panes, "text-size": flow_text_size, "appearance": flow_appearance, "view": flow_view, "model": flow_model_picker, "code-copy": flow_code_copy, "math": flow_math, "queue": flow_queue, "status": flow_thread_status, "projects-only": flow_threads_live_in_projects, "sign-out-and-in": flow_sign_out_and_in}
 
 
 def main():
