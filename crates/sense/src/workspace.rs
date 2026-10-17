@@ -879,8 +879,12 @@ impl Workspace {
             if shown {
                 continue;
             }
-            let title = info
-                .title
+            // The title the thread last showed here; or fx's, when it kept one.
+            let title = self
+                .library
+                .thread_title(&session)
+                .map(str::to_string)
+                .or(info.title)
                 .filter(|title| !title.trim().is_empty())
                 .unwrap_or_else(|| "Untitled".into());
             self.slots.push(Slot::Past(PastSession {
@@ -951,7 +955,7 @@ impl Workspace {
                 }
             }
             Effect::Send { agent, command } => {
-                if let Some(handle) = self.agents.get(&agent) {
+                if let Some(handle) = self.agents.get(&agent).cloned() {
                     handle.send(match command {
                         Command::NewSession { chat, cwd } => {
                             sense_agent::Command::NewSession { cwd, tag: chat }
@@ -960,17 +964,34 @@ impl Workspace {
                             session,
                             cwd,
                             prompt,
-                        } => sense_agent::Command::Prompt {
-                            session: SessionId::new(session),
-                            cwd,
-                            text: prompt.text,
-                            model: prompt.model,
-                            images: prompt
-                                .images
-                                .into_iter()
-                                .map(|image| (image.mime, image.bytes))
-                                .collect(),
-                        },
+                        } => {
+                            // Reopened later, the thread starts on this model
+                            // and shows this title: a new chat has its title
+                            // before it has a session to keep it under.
+                            let title = self
+                                .view_for_session(&session, cx)
+                                .map(|view| view.read(cx).title.to_string());
+                            let model_changed = prompt.model.as_ref().is_some_and(|model| {
+                                self.library.set_thread_model(&session, model)
+                            });
+                            let title_changed = title.is_some_and(|title| {
+                                self.library.set_thread_title(&session, &title)
+                            });
+                            if model_changed || title_changed {
+                                self.save_library(cx);
+                            }
+                            sense_agent::Command::Prompt {
+                                session: SessionId::new(session),
+                                cwd,
+                                text: prompt.text,
+                                model: prompt.model,
+                                images: prompt
+                                    .images
+                                    .into_iter()
+                                    .map(|image| (image.mime, image.bytes))
+                                    .collect(),
+                            }
+                        }
                         Command::Cancel { session } => sense_agent::Command::Cancel {
                             session: SessionId::new(session),
                         },
@@ -1791,7 +1812,17 @@ impl Workspace {
                             this.panel_open = true;
                         }
                     }
-                    ChatEvent::TitleChanged => {}
+                    // fx's own title, or the first message's: kept for when
+                    // the thread is reopened.
+                    ChatEvent::TitleChanged => {
+                        let session = this.life.chat(id).and_then(|chat| chat.session.clone());
+                        let title = view.read(cx).title.to_string();
+                        if let Some(session) = session
+                            && this.library.set_thread_title(&session, &title)
+                        {
+                            this.save_library(cx);
+                        }
+                    }
                     ChatEvent::NeedOlderHistory => {
                         let session = this.life.chat(id).and_then(|chat| chat.session.clone());
                         let cursor = view.update(cx, |view, _| view.next_history_page(false));
@@ -1816,7 +1847,20 @@ impl Workspace {
         let id = self.next_chat;
         self.next_chat += 1;
         let view = self.make_view(id, past.cwd.clone(), window, cx);
-        view.update(cx, |view, _| view.title = past.title.clone());
+        // The model it last ran on. fx resumes a session on the model it is
+        // launched with, so the thread has to say which. Threads from before
+        // the app kept this fall back to the one fx saved with the session.
+        let model = self
+            .library
+            .thread_model(&past.session)
+            .map(str::to_string)
+            .or_else(|| fx_saved_model(&past.session));
+        view.update(cx, |view, cx| {
+            view.title = past.title.clone();
+            if let Some(model) = model {
+                view.restore_model(model, cx);
+            }
+        });
         self.slots[ix] = Slot::Live(view.clone());
         let (cwd, session) = (past.cwd, past.session);
         self.show_history(&view, &session, cx);
@@ -1899,6 +1943,9 @@ impl Workspace {
             // A page still on its way is dropped when it comes.
             self.history_cache.remove(session);
             self.history_requested.remove(session);
+            if self.library.forget_thread(session) {
+                self.save_library(cx);
+            }
         }
         let mut doomed: Vec<PathBuf> = view.read(cx).snapshot_dir().into_iter().collect();
         // A replayed session id names a real recording's folder; keep it.
@@ -2935,6 +2982,17 @@ fn visible_quads(window: &Window) -> Vec<([i32; 4], String)> {
             ))
         })
         .collect()
+}
+
+/// The model fx saved with a session: the one it was created on, or last
+/// switched to.
+fn fx_saved_model(id: &str) -> Option<String> {
+    let saved = std::fs::read(fx_session_dir(id)?.join("session.json")).ok()?;
+    let saved: serde_json::Value = serde_json::from_slice(&saved).ok()?;
+    saved["model"]
+        .as_str()
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
 }
 
 /// fx keeps each session under `~/.fx/sessions/<id>`. The id comes from the

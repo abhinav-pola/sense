@@ -1046,6 +1046,12 @@ impl ChatView {
         cx.notify();
     }
 
+    /// A reopened thread: back on the model it last ran on, kept like a
+    /// pick, so a new default doesn't move it.
+    pub fn restore_model(&mut self, id: String, cx: &mut Context<Self>) {
+        self.pick_model(id, cx);
+    }
+
     /// Opens or closes the model picker; closing gives the composer back
     /// the cursor.
     pub fn show_picker(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {

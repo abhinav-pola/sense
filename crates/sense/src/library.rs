@@ -26,6 +26,14 @@ pub struct Library {
     /// The model picked last; new threads start on it.
     #[serde(default)]
     pub model: Option<String>,
+    /// The model each thread last ran on, by fx session id, so a thread
+    /// reopened later stays on it rather than taking the default.
+    #[serde(default)]
+    pub thread_models: BTreeMap<String, String>,
+    /// The title each thread showed, by fx session id. fx keeps a title
+    /// only when it generates one, which it doesn't for every provider.
+    #[serde(default)]
+    pub thread_titles: BTreeMap<String, String>,
     /// OpenRouter's model list, as last refreshed.
     #[serde(default)]
     pub models: Vec<crate::models::Model>,
@@ -198,6 +206,46 @@ impl Library {
         true
     }
 
+    /// The model a thread last ran on, if known.
+    pub fn thread_model(&self, session: &str) -> Option<&str> {
+        self.thread_models.get(session).map(String::as_str)
+    }
+
+    /// Records the model a thread runs on. Whether that changed anything,
+    /// so callers save only when it did.
+    pub fn set_thread_model(&mut self, session: &str, model: &str) -> bool {
+        if self.thread_model(session) == Some(model) {
+            return false;
+        }
+        self.thread_models
+            .insert(session.to_string(), model.to_string());
+        true
+    }
+
+    /// The title a thread last showed, if known.
+    pub fn thread_title(&self, session: &str) -> Option<&str> {
+        self.thread_titles.get(session).map(String::as_str)
+    }
+
+    /// Records the title a thread shows. Blank titles aren't kept. Whether
+    /// that changed anything, so callers save only when it did.
+    pub fn set_thread_title(&mut self, session: &str, title: &str) -> bool {
+        let title = title.trim();
+        if title.is_empty() || self.thread_title(session) == Some(title) {
+            return false;
+        }
+        self.thread_titles
+            .insert(session.to_string(), title.to_string());
+        true
+    }
+
+    /// Drops a deleted thread's model and title. Whether there were any.
+    pub fn forget_thread(&mut self, session: &str) -> bool {
+        let model = self.thread_models.remove(session).is_some();
+        let title = self.thread_titles.remove(session).is_some();
+        model || title
+    }
+
     /// Where a thread shows: where it was put, or else the project whose
     /// repository holds its folder (the innermost, if they nest).
     pub fn place_of(&self, session: &str, cwd: &Path) -> Place {
@@ -240,6 +288,69 @@ mod tests {
         library.save(&path).unwrap();
         assert_eq!(Library::load(&path), library);
         assert!(!path.with_extension("json.tmp").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Each thread keeps its own model across a restart; the default for
+    /// new threads is separate. A library saved before threads kept models
+    /// still loads, with none known.
+    #[test]
+    fn thread_models_are_kept_per_thread() {
+        let mut library = Library {
+            model: Some("default/model".into()),
+            ..Library::default()
+        };
+        assert!(library.set_thread_model("s1", "openai/gpt-5"));
+        assert!(!library.set_thread_model("s1", "openai/gpt-5"), "unchanged");
+        assert!(library.set_thread_model("s2", "anthropic/claude-haiku-5.5"));
+        let dir = std::env::temp_dir().join(format!("sense-library-models-{}", std::process::id()));
+        let path = dir.join("library.json");
+        library.save(&path).unwrap();
+        let loaded = Library::load(&path);
+        assert_eq!(loaded.thread_model("s1"), Some("openai/gpt-5"));
+        assert_eq!(
+            loaded.thread_model("s2"),
+            Some("anthropic/claude-haiku-5.5")
+        );
+        assert_eq!(loaded.thread_model("s3"), None);
+        assert_eq!(loaded.model.as_deref(), Some("default/model"));
+
+        let mut loaded = loaded;
+        assert!(loaded.forget_thread("s1"));
+        assert!(!loaded.forget_thread("s1"));
+        assert_eq!(loaded.thread_model("s1"), None);
+
+        std::fs::write(
+            &path,
+            r#"{"projects":[],"folders":[],"threads":{},"next_id":0}"#,
+        )
+        .unwrap();
+        assert_eq!(Library::load(&path).thread_model("s2"), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A thread's title survives a restart even when fx kept none; blank
+    /// titles don't replace one that's there, and deleting forgets it.
+    #[test]
+    fn thread_titles_are_kept_per_thread() {
+        let mut library = Library::default();
+        assert!(library.set_thread_title("s1", "Fix the add bug"));
+        assert!(
+            !library.set_thread_title("s1", "Fix the add bug"),
+            "unchanged"
+        );
+        assert!(!library.set_thread_title("s1", "   "), "blank");
+        assert!(library.set_thread_title("s1", "  Fix add() in calc.py "));
+        assert!(library.set_thread_model("s1", "openai/gpt-5"));
+        let dir = std::env::temp_dir().join(format!("sense-library-titles-{}", std::process::id()));
+        let path = dir.join("library.json");
+        library.save(&path).unwrap();
+        let mut loaded = Library::load(&path);
+        assert_eq!(loaded.thread_title("s1"), Some("Fix add() in calc.py"));
+        assert_eq!(loaded.thread_title("s2"), None);
+        assert!(loaded.forget_thread("s1"));
+        assert_eq!(loaded.thread_title("s1"), None);
+        assert_eq!(loaded.thread_model("s1"), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
