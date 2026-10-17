@@ -931,20 +931,24 @@ impl ChatView {
         true
     }
 
-    /// A `show_view` call from the app's own tool server: the view it
-    /// carries replaces any with its id. Calls the tool server refused
-    /// (not a view) are left as the tool rows they are.
+    /// A `show_view` call: the view it carries replaces any with its id.
+    /// fx marks its own calls `_meta.fx.toolCall.view`; sessions from before
+    /// it drew views name the app's old MCP server instead. Calls that
+    /// aren't a view (the model hears why) are left as the tool rows they
+    /// are.
     fn take_view(
         &mut self,
         meta: Option<&serde_json::Map<String, serde_json::Value>>,
         raw_input: Option<&serde_json::Value>,
         cx: &mut Context<Self>,
     ) {
-        let mcp = meta
+        let call = meta
             .and_then(|meta| meta.get("fx"))
-            .map(|fx| &fx["toolCall"]["mcp"]);
-        let ours = mcp.is_some_and(|mcp| {
-            mcp["server"] == crate::view::SERVER && mcp["tool"] == crate::view::TOOL
+            .map(|fx| &fx["toolCall"]);
+        let ours = call.is_some_and(|call| {
+            call["view"] == true
+                || (call["mcp"]["server"] == crate::view::LEGACY_SERVER
+                    && call["mcp"]["tool"] == crate::view::TOOL)
         });
         let Some(view) = raw_input
             .filter(|_| ours)

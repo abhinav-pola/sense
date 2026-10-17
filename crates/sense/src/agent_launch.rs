@@ -62,18 +62,8 @@ pub fn fx_launch(api_key: &str, model: &str, known: &[crate::models::Model]) -> 
         args: vec!["acp".into()],
         env,
         record: std::env::var_os("SENSE_RECORD").map(PathBuf::from),
-        mcp_servers: ui_server().into_iter().collect(),
+        views: Some(crate::view::tool()),
     })
-}
-
-/// This app's own tools for fx: the side panel's views, served by this
-/// binary started with `--ui-server`.
-fn ui_server() -> Option<sense_agent::acp::McpServer> {
-    let program = std::env::current_exe().ok()?;
-    Some(sense_agent::acp::McpServer::Stdio(
-        sense_agent::acp::McpServerStdio::new(crate::view::SERVER, program)
-            .args(vec!["--ui-server".into()]),
-    ))
 }
 
 /// `SENSE_REPLAY=<fixture>` swaps fx for a recorded session, so the app runs
@@ -96,6 +86,7 @@ pub fn replay_launch() -> Option<Launch> {
         pace,
         // Fixtures are recorded with the default model.
         model: Some(DEFAULT_MODEL.into()),
+        views: Some(crate::view::tool()),
     })
 }
 

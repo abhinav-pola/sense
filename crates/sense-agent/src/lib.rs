@@ -37,9 +37,8 @@ pub enum Launch {
         env: BTreeMap<String, String>,
         /// Append every ACP line to this JSONL file, for replay fixtures.
         record: Option<PathBuf>,
-        /// MCP servers every session of this agent gets (the app's own
-        /// tools, such as drawing in the side panel).
-        mcp_servers: Vec<acp::McpServer>,
+        /// Gives every session fx's `show_view` tool.
+        views: Option<Views>,
     },
     /// Play a recorded session back instead of running fx.
     Replay {
@@ -47,7 +46,50 @@ pub enum Launch {
         pace: replay::Pace,
         /// The model the recording's sessions started with.
         model: Option<String>,
+        /// Answers the recording's `show_view` calls, as with fx.
+        views: Option<Views>,
     },
+}
+
+/// The client's side of fx's `show_view` tool: the view format the model is
+/// told about, and the check each call's view goes through. fx owns the
+/// tool; the format is the client's, so it is sent at initialize as
+/// `clientCapabilities._meta.sense.views`.
+#[derive(Clone)]
+pub struct Views {
+    pub description: String,
+    /// JSON Schema of the tool's arguments.
+    pub input_schema: serde_json::Value,
+    /// Says what was shown, or what is wrong with the view: either way, the
+    /// text becomes the tool result the model reads. Runs on the agent's
+    /// connection, so it must not block.
+    pub check: CheckView,
+}
+
+/// See [`Views::check`].
+pub type CheckView = Arc<dyn Fn(&serde_json::Value) -> Result<String, String> + Send + Sync>;
+
+/// fx runs each `show_view` call by asking the client.
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, agent_client_protocol::JsonRpcRequest,
+)]
+#[request(method = "_sense/show_view", response = ShowViewResponse)]
+#[serde(rename_all = "camelCase")]
+struct ShowViewRequest {
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    tool_call_id: Option<String>,
+    input: serde_json::Value,
+}
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, agent_client_protocol::JsonRpcResponse,
+)]
+#[serde(rename_all = "camelCase")]
+struct ShowViewResponse {
+    content: String,
+    is_error: bool,
 }
 
 pub enum Command {
@@ -175,7 +217,7 @@ pub fn spawn(launch: Launch) -> AgentHandle {
                         args,
                         env,
                         record,
-                        mcp_servers,
+                        views,
                     } => {
                         // New sessions start on the model fx was launched with.
                         let model = env.get("FX_MODEL").cloned();
@@ -184,12 +226,13 @@ pub fn spawn(launch: Launch) -> AgentHandle {
                         if let Some(path) = record {
                             agent = agent.with_debug(recorder(&path)?);
                         }
-                        serve(agent, commands_rx, events_tx.clone(), mcp_servers, model).await
+                        serve(agent, commands_rx, events_tx.clone(), views, model).await
                     }
                     Launch::Replay {
                         fixture,
                         pace,
                         model,
+                        views,
                     } => {
                         let fixture = replay::Fixture::load(&fixture).map_err(|err| {
                             agent_client_protocol::Error::internal_error().data(err.to_string())
@@ -206,7 +249,7 @@ pub fn spawn(launch: Launch) -> AgentHandle {
                         .detach();
                         let transport =
                             agent_client_protocol::ByteStreams::new(to_agent_tx, to_client_rx);
-                        serve(transport, commands_rx, events_tx.clone(), Vec::new(), model).await
+                        serve(transport, commands_rx, events_tx.clone(), views, model).await
                     }
                 }
             });
@@ -255,11 +298,22 @@ async fn serve(
     transport: impl ConnectTo<Client> + 'static,
     commands: Receiver<Command>,
     events: Sender<Event>,
-    mcp_servers: Vec<acp::McpServer>,
+    views: Option<Views>,
     launch_model: Option<String>,
 ) -> agent_client_protocol::Result<()> {
     let notify_events = events.clone();
     let permission_events = events.clone();
+    let check_view = views.as_ref().map(|views| views.check.clone());
+    let mut meta = acp::Meta::new();
+    if let Some(views) = &views {
+        meta.insert(
+            "sense".into(),
+            serde_json::json!({"views": {
+                "description": views.description,
+                "inputSchema": views.input_schema,
+            }}),
+        );
+    }
     Client
         .builder()
         .name("sense")
@@ -297,6 +351,27 @@ async fn serve(
             },
             agent_client_protocol::on_receive_request!(),
         )
+        .on_receive_request(
+            async move |request: ShowViewRequest, responder, _cx| {
+                // The app draws views from the tool call itself, live and
+                // in history; this only says whether there is one to draw.
+                let checked = match &check_view {
+                    Some(check) => check(&request.input),
+                    None => Err("this client draws no views".into()),
+                };
+                responder.respond(match checked {
+                    Ok(content) => ShowViewResponse {
+                        content,
+                        is_error: false,
+                    },
+                    Err(content) => ShowViewResponse {
+                        content,
+                        is_error: true,
+                    },
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
         .connect_with(transport, async move |connection: ConnectionTo<Agent>| {
             let init = connection
                 .send_request(
@@ -309,7 +384,9 @@ async fn serve(
                             )
                             // Subagents stream their own updates, announced
                             // on the parent session first.
-                            .subagents(SubagentCapabilities::new()),
+                            .subagents(SubagentCapabilities::new())
+                            // fx's show_view tool, in the client's format.
+                            .meta((!meta.is_empty()).then_some(meta)),
                     ),
                 )
                 .block_task()
@@ -331,9 +408,8 @@ async fn serve(
                         let known = known.clone();
                         let models = models.clone();
                         let launch_model = launch_model.clone();
-                        let mcp_servers = mcp_servers.clone();
                         connection.spawn(async move {
-                            let request = NewSessionRequest::new(cwd).mcp_servers(mcp_servers);
+                            let request = NewSessionRequest::new(cwd);
                             match connection_for_task.send_request(request).block_task().await {
                                 Ok(response) => {
                                     known
@@ -370,15 +446,13 @@ async fn serve(
                     } => {
                         let known = known.clone();
                         let models = models.clone();
-                        let mcp_servers = mcp_servers.clone();
                         connection.spawn(async move {
                             let unseen = known
                                 .lock()
                                 .unwrap_or_else(|err| err.into_inner())
                                 .insert(session.clone());
                             if unseen {
-                                let resume = ResumeSessionRequest::new(session.clone(), cwd)
-                                    .mcp_servers(mcp_servers);
+                                let resume = ResumeSessionRequest::new(session.clone(), cwd);
                                 if let Err(err) =
                                     connection_for_task.send_request(resume).block_task().await
                                 {

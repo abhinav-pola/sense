@@ -506,6 +506,23 @@ impl Workspace {
                 self.panel.update(cx, |panel, cx| panel.select(tab, cx));
                 json!({ "ok": true })
             }
+            "scroll_view" => {
+                let y = command["y"].as_f64().unwrap_or_default() as f32;
+                self.panel.update(cx, |panel, cx| panel.scroll_view(y, cx));
+                json!({ "ok": true })
+            }
+            "pick_pane" | "toggle_section" => {
+                let block = command["block"].as_u64().unwrap_or_default() as usize;
+                let index = command["index"].as_u64().unwrap_or_default() as usize;
+                self.panel.update(cx, |panel, cx| {
+                    if command["cmd"] == "pick_pane" {
+                        panel.pick_pane(block, index, cx)
+                    } else {
+                        panel.toggle_section(block, index, cx)
+                    }
+                });
+                json!({ "ok": true })
+            }
             "appearance" => {
                 let choice = match command["choice"].as_str() {
                     Some("light") => Appearance::Light,
@@ -2280,7 +2297,8 @@ impl Workspace {
                                 // A 1px stroke on half-pixel centers covers
                                 // whole device pixels: no anti-aliased blur.
                                 let x = (bounds.left() + px(14.)).floor() + px(0.5);
-                                let mid = (bounds.top() + bounds.size.height / 2.).floor() + px(0.5);
+                                let mid =
+                                    (bounds.top() + bounds.size.height / 2.).floor() + px(0.5);
                                 let radius = px(8.);
                                 let mut path = PathBuilder::stroke(px(1.));
                                 path.move_to(point(x, bounds.top() - px(2.)));

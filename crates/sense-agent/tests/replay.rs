@@ -13,12 +13,31 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// The views the app offered fx when the fixture was recorded, read from its
+/// `initialize`: replay only plays a recording to a client that offers the
+/// same. This crate doesn't know the app's view format.
+fn recorded_views(name: &str) -> Option<sense_agent::Views> {
+    let text = std::fs::read_to_string(fixture(name)).unwrap();
+    let initialize = text.lines().find_map(|line| {
+        let record: serde_json::Value = serde_json::from_str(line).ok()?;
+        let message: serde_json::Value = serde_json::from_str(record["line"].as_str()?).ok()?;
+        (message["method"] == "initialize").then_some(message)
+    })?;
+    let views = &initialize["params"]["clientCapabilities"]["_meta"]["sense"]["views"];
+    Some(sense_agent::Views {
+        description: views["description"].as_str()?.to_string(),
+        input_schema: views["inputSchema"].clone(),
+        check: std::sync::Arc::new(|_| Ok("Shown.".into())),
+    })
+}
+
 #[test]
 fn edit_file_turn_replays() {
     let agent = sense_agent::spawn(Launch::Replay {
         fixture: fixture("edit-file.jsonl"),
         pace: Pace::Instant,
         model: Some("anthropic/claude-sonnet-5.5".into()),
+        views: recorded_views("edit-file.jsonl"),
     });
     let workspace = std::env::temp_dir().join(format!("sense-replay-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&workspace);

@@ -62,9 +62,26 @@ FIXTURES = {
             "Compare bubble sort, merge sort and quicksort for me in a side panel view: "
             "a table of best/average/worst time and memory, a bar chart of roughly how many "
             "comparisons each makes on 1,000 random items, and buttons asking which one I'd "
-            "like an implementation of. Keep the chat reply to one sentence.",
+            "like an implementation of. Each button's message must ask you to write that "
+            "implementation to a new .py file next to calc.py. Keep the chat reply to one sentence.",
             {"click_action": 0},
         ],
+    ),
+    # One view using every kind of block, drawn by fx's own show_view tool.
+    # The model may get a block wrong first: the check's answer is part of
+    # the recording, and so is the corrected call.
+    "view-gallery": (
+        lambda: scratch("view-gallery"),
+        "Without reading any files, call show_view to draw one view titled \"Checkout service\" "
+        "about an imaginary web checkout service. Put these blocks in it: a graph (direction down) "
+        "of its architecture with about 7 nodes, a few labeled edges and one retry loop; a "
+        "line_chart of p95 latency in ms for two endpoints over 7 days; an area_chart of requests "
+        "per hour for two regions; a pie_chart (donut) of payment methods; a radar_chart comparing "
+        "two releases on 5 qualities; a sankey of how 1,000 sessions flow from landing to purchase "
+        "or drop-off; a tree of the repository layout; steps for the deploy pipeline with done, "
+        "active and pending steps; a diff of a small config change; tags; and key_value. Arrange "
+        "them with tabs (Overview, Traffic, Code) and put the diff and key_value in an accordion. "
+        "Keep the chat reply to one sentence.",
     ),
     # A turn on the default model, then one on a picked model: the session
     # is switched to it before the second prompt.

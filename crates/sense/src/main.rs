@@ -3,6 +3,7 @@ mod agent_launch;
 mod automation;
 mod chat;
 mod fuzzy;
+mod graph;
 mod library;
 mod math;
 mod model_picker;
@@ -10,7 +11,6 @@ mod models;
 mod panel;
 mod snapshot;
 mod thumb;
-mod ui_server;
 mod view;
 mod workspace;
 mod worktree;
@@ -26,11 +26,6 @@ const TEXT_SIZES: std::ops::RangeInclusive<f32> = 10.0..=28.0;
 const TEXT_SIZE_DEFAULT: f32 = 16.;
 
 fn main() {
-    // fx starts this same binary as the MCP server for the panel's tools.
-    if std::env::args().nth(1).as_deref() == Some("--ui-server") {
-        ui_server::serve();
-        return;
-    }
     install_panic_log();
     gpui_kit::application().with_assets(Assets).run(|cx| {
         gpui_kit::init(cx);

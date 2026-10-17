@@ -259,14 +259,104 @@ def recorded_views(fixture):
     for line in (ROOT / "fixtures/acp" / fixture).open():
         message = json.loads(json.loads(line)["line"])
         update = message.get("params", {}).get("update", {})
-        mcp = update.get("_meta", {}).get("fx", {}).get("toolCall", {}).get("mcp", {})
-        if update.get("sessionUpdate") == "tool_call" and mcp.get("tool") == "show_view":
+        # fx marks its own show_view calls; it reports nothing else as one.
+        call = update.get("_meta", {}).get("fx", {}).get("toolCall", {})
+        if update.get("sessionUpdate") == "tool_call" and call.get("view") is True:
             raw = update["rawInput"]
             # Models sometimes wrap it the way fx's own tools take input.
             if set(raw) == {"request"}:
                 raw = raw["request"] if isinstance(raw["request"], dict) else json.loads(raw["request"])
             views.append(raw)
     return views
+
+
+def block_kind(block):
+    """A block as the panel's snapshot names it: `bar_chart` is BarChart."""
+    if block["type"] == "columns":
+        return {"columns": [[block_kind(b) for b in column] for column in block["columns"]]}
+    return "".join(part.capitalize() for part in block["type"].split("_"))
+
+
+def settled_screenshot(app, name):
+    """A screenshot once charts have drawn in and tab underlines slid over:
+    the offscreen render shows the frame it is asked for, mid-animation or
+    not."""
+    # A background window draws only when asked, and springs (a tab's
+    # underline sliding over) only move on drawn frames: draw them as a
+    # window on screen would while the animations run.
+    for _ in range(40):
+        app.send(cmd="frame")
+        time.sleep(0.03)
+    app.send(cmd="screenshot", path=str(OUT / name))
+
+
+def flow_view_gallery():
+    """One view with every kind of block, drawn by fx's own show_view tool:
+    fx asks the app to check it, the app answers, and the panel draws it
+    from the tool call. Each pane of its tabs shows, the accordion opens and
+    closes, and it reads in dark and light."""
+    recorded = recorded_views("view-gallery.jsonl")
+    assert recorded, "the recording drew no view"
+    view = recorded[-1]
+    used = set()
+
+    def collect(blocks):
+        for block in blocks:
+            used.add(block["type"])
+            for key in ("columns",):
+                for column in block.get(key, []):
+                    collect(column)
+            for pane in block.get("tabs", []):
+                collect(pane["blocks"])
+            for section in block.get("sections", []):
+                collect(section["blocks"])
+
+    collect(view["blocks"])
+    wanted = {"graph", "line_chart", "area_chart", "pie_chart", "radar_chart", "sankey", "tree",
+              "steps", "diff", "tags", "key_value", "tabs", "accordion"}
+    assert wanted <= used, f"the recording's view lacks {wanted - used}"
+    app = App("view-gallery.jsonl", fresh_workspace("view-gallery"))
+    try:
+        app.send(cmd="appearance", choice="dark")
+        app.send(cmd="type", text="Draw the checkout service view.")
+        app.send(cmd="submit")
+        state = wait_for(lambda: (s := app.state())["chat"]["session"] and not s["chat"]["busy"] and s, "the turn")
+        assert not [e for e in state["chat"]["entries"] if "notice" in e], state["chat"]["entries"]
+        panel = state["panel"]
+        assert state["panel_open"] and panel["tab"] == view["id"], panel
+        assert panel["views"] == [{"id": view["id"], "title": view["title"],
+                                   "blocks": [block_kind(b) for b in view["blocks"]]}], panel["views"]
+        tabs = [c for c in panel["controls"] if c["kind"] == "tabs"]
+        assert tabs, panel["controls"]
+        for index, label in enumerate(tabs[0]["labels"]):
+            app.send(cmd="pick_pane", block=tabs[0]["block"], index=index)
+            assert app.state()["panel"]["controls"][0]["picked"] == index
+            app.send(cmd="scroll_view", y=0)
+            settled_screenshot(app, f"gallery-{label.lower()}-dark.png")
+            # And the rest of the pane, a screen further down.
+            app.send(cmd="scroll_view", y=700)
+            settled_screenshot(app, f"gallery-{label.lower()}-more-dark.png")
+            app.send(cmd="scroll_view", y=0)
+            # Accordions in this pane: every section open, then shot again.
+            pane = view["blocks"][0]["tabs"][index]["blocks"] if view["blocks"][0]["type"] == "tabs" else []
+            if not any(b["type"] == "accordion" for b in pane):
+                continue
+            for control in app.state()["panel"]["controls"]:
+                if control["kind"] != "accordion":
+                    continue
+                closed = [i for i in range(len(control["labels"])) if i not in control["open"]]
+                for section in closed:
+                    app.send(cmd="toggle_section", block=control["block"], index=section)
+                after = [c for c in app.state()["panel"]["controls"] if c["block"] == control["block"]][0]
+                assert sorted(after["open"]) == list(range(len(control["labels"]))), after
+                settled_screenshot(app, f"gallery-{label.lower()}-open-dark.png")
+        app.send(cmd="appearance", choice="light")
+        app.send(cmd="pick_pane", block=tabs[0]["block"], index=0)
+        settled_screenshot(app, "gallery-overview-light.png")
+        app.send(cmd="pick_pane", block=tabs[0]["block"], index=1)
+        settled_screenshot(app, "gallery-traffic-light.png")
+    finally:
+        app.close()
 
 
 def flow_view():
@@ -284,11 +374,8 @@ def flow_view():
         state = wait_for(lambda: (s := app.state())["chat"]["session"] and not s["chat"]["busy"] and s, "the first turn")
         panel = state["panel"]
         assert state["panel_open"] and panel["tab"] == view["id"], panel
-        kinds = {"markdown": "Markdown", "table": "Table", "stats": "Stats", "bar_chart": "BarChart",
-                 "checklist": "Checklist", "progress": "Progress", "code": "Code", "callout": "Callout",
-                 "actions": "Actions"}
         assert panel["views"] == [{"id": view["id"], "title": view["title"],
-                                   "blocks": [kinds[b["type"]] for b in view["blocks"]]}], panel["views"]
+                                   "blocks": [block_kind(b) for b in view["blocks"]]}], panel["views"]
         app.send(cmd="screenshot", path=str(OUT / "view.png"))
 
         buttons = [b for block in view["blocks"] if block["type"] == "actions" for b in block["buttons"]]
@@ -1192,7 +1279,7 @@ def flow_projects():
         app.close()
 
 
-FLOWS = {"edit-file": flow_edit_file, "projects": flow_projects, "images": flow_images, "subagents": flow_subagents, "history-paging": flow_history_paging, "stop-mid-turn": flow_stop_mid_turn, "two-chats": flow_two_chats_at_once, "notices": flow_notices, "layout": flow_layout, "resize-panes": flow_resize_panes, "text-size": flow_text_size, "appearance": flow_appearance, "view": flow_view, "model": flow_model_picker, "code-copy": flow_code_copy, "math": flow_math, "queue": flow_queue, "status": flow_thread_status, "projects-only": flow_threads_live_in_projects, "sign-out-and-in": flow_sign_out_and_in}
+FLOWS = {"edit-file": flow_edit_file, "projects": flow_projects, "images": flow_images, "subagents": flow_subagents, "history-paging": flow_history_paging, "stop-mid-turn": flow_stop_mid_turn, "two-chats": flow_two_chats_at_once, "notices": flow_notices, "layout": flow_layout, "resize-panes": flow_resize_panes, "text-size": flow_text_size, "appearance": flow_appearance, "view": flow_view, "view-gallery": flow_view_gallery, "model": flow_model_picker, "code-copy": flow_code_copy, "math": flow_math, "queue": flow_queue, "status": flow_thread_status, "projects-only": flow_threads_live_in_projects, "sign-out-and-in": flow_sign_out_and_in}
 
 
 def main():
