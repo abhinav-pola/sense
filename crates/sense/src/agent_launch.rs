@@ -37,20 +37,7 @@ pub fn fx_launch(api_key: &str, model: &str, known: &[crate::models::Model]) -> 
         }
         metadata.insert(known.id.clone(), limits);
     }
-    let providers = serde_json::json!({
-        PROVIDER_LABEL: {
-            "protocol": "openai-chat-completions",
-            "base_url": "https://openrouter.ai/api/v1",
-            "auth": { "type": "bearer", "env": KEY_ENV },
-            "headers": {
-                "HTTP-Referer": "https://github.com/abhinavpola/sense",
-                "X-Title": "Sense",
-            },
-            // fx needs the context window to know when to compact, and
-            // vision to send pasted and attached images.
-            "model_metadata": metadata,
-        }
-    });
+    let providers = configured_providers(metadata);
     let env = BTreeMap::from([
         ("FX_CONFIGURED_PROVIDERS".to_string(), providers.to_string()),
         ("FX_PROVIDER".to_string(), PROVIDER_LABEL.to_string()),
@@ -63,6 +50,24 @@ pub fn fx_launch(api_key: &str, model: &str, known: &[crate::models::Model]) -> 
         env,
         record: std::env::var_os("SENSE_RECORD").map(PathBuf::from),
         views: Some(crate::view::tool()),
+    })
+}
+
+fn configured_providers(metadata: serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({
+        PROVIDER_LABEL: {
+            "protocol": "openai-chat-completions",
+            "base_url": "https://openrouter.ai/api/v1",
+            "cache_control": { "type": "ephemeral" },
+            "auth": { "type": "bearer", "env": KEY_ENV },
+            "headers": {
+                "HTTP-Referer": "https://github.com/abhinavpola/sense",
+                "X-Title": "Sense",
+            },
+            // fx needs the context window to know when to compact, and
+            // vision to send pasted and attached images.
+            "model_metadata": metadata,
+        }
     })
 }
 
@@ -97,4 +102,19 @@ pub fn fx_binary() -> Option<PathBuf> {
     }
     let vendored = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor/fx/zig-out/bin/fx");
     vendored.exists().then_some(vendored)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn openrouter_enables_automatic_prompt_caching() {
+        let providers = super::configured_providers(serde_json::Map::new());
+        let provider = &providers[super::PROVIDER_LABEL];
+        assert_eq!(
+            provider["cache_control"],
+            serde_json::json!({ "type": "ephemeral" })
+        );
+        assert_eq!(provider["base_url"], "https://openrouter.ai/api/v1");
+        assert_eq!(provider["auth"]["env"], super::KEY_ENV);
+    }
 }
