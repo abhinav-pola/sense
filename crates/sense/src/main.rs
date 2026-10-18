@@ -5,6 +5,7 @@ mod chat;
 mod connectors;
 mod fuzzy;
 mod graph;
+mod input_history;
 mod library;
 mod link_menu;
 mod math;

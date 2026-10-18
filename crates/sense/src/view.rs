@@ -398,6 +398,7 @@ pub fn tool() -> sense_agent::Views {
     sense_agent::Views {
         description: DESCRIPTION.into(),
         input_schema: input_schema(),
+        guidance: GUIDANCE.into(),
         check: std::sync::Arc::new(check),
     }
 }
@@ -643,6 +644,31 @@ arrange other blocks. The arguments are the view itself (`id`, `title`, \
 `blocks`), not wrapped in a `request`. Reusing an `id` replaces that view, so \
 keep one id per subject and update it as things change. Keep the chat reply \
 short when the view says it.";
+
+/// Added to the system prompt of every new session, so the model uses the
+/// panel on its own rather than only when asked.
+pub const GUIDANCE: &str = "# Side panel
+
+You are running in a desktop app with a side panel next to the chat. You draw \
+in it with the `show_view` tool. The user sees it beside the conversation, so \
+use it whenever it shows something better than chat text, without waiting to \
+be asked:
+
+- Comparisons, options, and anything with several attributes per item: a table.
+- Numbers, counts, sizes, timings, or trends: stats or a chart.
+- How things connect, such as architecture, call flow, data flow, state \
+machines, or dependencies: a graph. Use a tree for hierarchies such as \
+directories or type nesting.
+- Multi-step work: a checklist or steps view at the start, kept up to date \
+under the same `id` as you go.
+- A change you made or propose to one file: a diff.
+- Findings from a review, audit, or investigation: a view that groups them, \
+with callouts for the important ones.
+- A decision the user needs to make: actions buttons, one per option.
+
+Skip the panel for short conversational replies, single facts, and anything \
+one or two sentences cover. When you show a view, keep the chat reply to what \
+the view does not already say.";
 
 /// The tool's input schema (JSON Schema), mirroring [`View`].
 pub fn input_schema() -> Value {

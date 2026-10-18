@@ -283,6 +283,8 @@ pub struct ChatView {
     entries: Vec<Entry>,
     scroller: Entity<MessageScrollerState>,
     composer: Entity<TextareaState>,
+    input_history: crate::input_history::InputHistory,
+    _input_keys: Subscription,
     /// Streamed text not yet shown: the transcript reveals whole lines.
     held: String,
     held_thought: bool,
@@ -370,17 +372,40 @@ impl ChatView {
         cx.subscribe_in(
             &composer,
             window,
-            |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter {
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter {
                     secondary: false,
                     shift: false,
-                } = event
-                {
+                } => {
                     this.submit(window, cx);
                 }
+                InputEvent::Change => this.input_history.reset(),
+                _ => {}
             },
         )
         .detach();
+        // Bound arrows dispatch actions before element key-down callbacks.
+        // Intercept first, but only while this chat's composer owns focus.
+        let keys = cx.listener(|this, event: &KeystrokeEvent, window, cx| {
+            let key = &event.keystroke;
+            if this.read_only || !this.composer.read(cx).focus_handle(cx).is_focused(window) {
+                return;
+            }
+            if key.modifiers.platform || key.modifiers.control || key.modifiers.shift {
+                return;
+            }
+            let handled = if key.key == "up" && key.modifiers.alt {
+                this.unqueue(window, cx)
+            } else if !key.modifiers.alt && matches!(key.key.as_str(), "up" | "down") {
+                this.recall_input(key.key == "up", window, cx)
+            } else {
+                false
+            };
+            if handled {
+                cx.stop_propagation();
+            }
+        });
+        let input_keys = cx.intercept_keystrokes(keys);
         Self {
             id,
             title: "New chat".into(),
@@ -392,6 +417,8 @@ impl ChatView {
             entries: Vec::new(),
             scroller,
             composer,
+            input_history: Default::default(),
+            _input_keys: input_keys,
             held: String::new(),
             held_thought: false,
             revealing: false,
@@ -798,6 +825,50 @@ impl ChatView {
         self.composer.read(cx).focus_handle(cx)
     }
 
+    /// Plain arrows browse this chat's user messages, including loaded history
+    /// and a queued input. Attachments stay in the draft and are not replayed.
+    fn recall_input(&mut self, older: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let composer = self.composer.read(cx);
+        if !composer.focus_handle(cx).is_focused(window) || !composer.selected_range().is_empty() {
+            return false;
+        }
+        let current = composer.value().to_string();
+        let cursor = composer.cursor();
+        // Leave ordinary multiline editing alone until an edge is reached.
+        // Once browsing, repeated arrows cycle even for multiline messages.
+        if !self.input_history.active()
+            && (if older {
+                current[..cursor].contains('\n')
+            } else {
+                current[cursor..].contains('\n')
+            })
+        {
+            return false;
+        }
+        let recalled = if older {
+            let messages = self
+                .entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    Entry::User(text, _) => Some(text.to_string()),
+                    _ => None,
+                })
+                .chain(self.queued.iter().map(|queued| queued.text.clone()));
+            self.input_history.previous(&current, messages)
+        } else {
+            self.input_history.next()
+        };
+        let Some(text) = recalled else {
+            return false;
+        };
+        self.composer.update(cx, |state, cx| {
+            state.set_value(text.clone(), window, cx);
+            state.set_selected_range(text.len()..text.len(), cx);
+        });
+        cx.notify();
+        true
+    }
+
     /// Sends what's in the composer; while a turn runs, queues it to go
     /// when the turn is done (one message at most: with one waiting, the
     /// draft stays in the composer).
@@ -814,6 +885,7 @@ impl ChatView {
             return;
         }
         let attachments = std::mem::take(&mut self.attachments);
+        self.input_history.reset();
         self.composer
             .update(cx, |state, cx| state.set_value("", window, cx));
         if self.busy {
@@ -899,6 +971,7 @@ impl ChatView {
         let Some(queued) = self.queued.take() else {
             return false;
         };
+        self.input_history.reset();
         let draft = self.composer.read(cx).value().to_string();
         let text = if draft.trim().is_empty() {
             queued.text
@@ -1381,6 +1454,7 @@ impl ChatView {
 
     #[cfg(feature = "automation")]
     pub fn set_draft(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.input_history.reset();
         self.composer
             .update(cx, |state, cx| state.set_value(text, window, cx));
     }
@@ -1724,18 +1798,6 @@ impl Render for ChatView {
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().secondary)
-                    // Option+Up takes the queued message back to edit.
-                    .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                        let keystroke = &event.keystroke;
-                        if keystroke.key == "up"
-                            && keystroke.modifiers.alt
-                            && !keystroke.modifiers.platform
-                            && !keystroke.modifiers.control
-                            && this.unqueue(window, cx)
-                        {
-                            cx.stop_propagation();
-                        }
-                    }))
                     .when_some(self.queued.as_ref(), |this, queued| {
                         let theme = cx.theme();
                         let images = queued.attachments.len();

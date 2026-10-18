@@ -27,6 +27,7 @@ fn recorded_views(name: &str) -> Option<sense_agent::Views> {
     Some(sense_agent::Views {
         description: views["description"].as_str()?.to_string(),
         input_schema: views["inputSchema"].clone(),
+        guidance: String::new(),
         check: std::sync::Arc::new(|_| Ok("Shown.".into())),
     })
 }

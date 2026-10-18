@@ -608,9 +608,73 @@ def flow_queue():
         assert app.state()["chat"]["queued"]["images"] == 1
         app.send(cmd="stop")
         wait_for(lambda: not app.state()["chat"]["busy"], "the turn to stop")
+        # Stopped queues return on the next render, which a background window
+        # may not draw until requested. Drive that frame before observing it.
+        app.send(cmd="frame", timed=True)
         chat = wait_for(lambda: (c := app.state()["chat"])["queued"] is None and c, "the queued message to come back")
         assert chat["draft"] == "what about this\nand also" and chat["attachments"] == ["image/png"], chat
         assert len(users()) == 2, users()
+    finally:
+        app.close()
+
+
+def flow_input_history():
+    """Real arrow events recall this chat's inputs without sending them,
+    preserve drafts and attachments, and leave multiline editing alone."""
+    app = App("three-turns.jsonl", fresh_workspace("input-history"), pace="0")
+    try:
+        def draft():
+            return app.state()["chat"]["draft"]
+
+        def key(keys):
+            app.send(cmd="key", keys=keys)
+            app.send(cmd="frame", timed=True)
+
+        key("up")
+        assert draft() == "", "an empty chat has nothing to recall"
+        prompts = ["Reply with just the word alpha.", "Reply with just the word beta."]
+        for prompt in prompts:
+            app.send(cmd="type", text=prompt)
+            app.send(cmd="submit")
+            wait_for(lambda: not app.state()["chat"]["busy"], "the turn to end")
+        app.send(cmd="type", text="unsent 日本語")
+        key("up")
+        assert draft() == prompts[1], draft()
+        key("up")
+        assert draft() == prompts[0], draft()
+        key("up")
+        assert draft() == prompts[0], "oldest input stays selected"
+        key("down")
+        assert draft() == prompts[1], draft()
+        key("down")
+        assert draft() == "unsent 日本語", draft()
+        key("down")
+        assert draft() == "unsent 日本語"
+
+        # Typing into a recalled input starts a fresh browse, not a stale cursor.
+        key("up")
+        key("end x")
+        edited = draft()
+        assert edited != prompts[1]
+        key("up down")
+        assert draft() == edited, draft()
+
+        app.send(cmd="type", text="first line\nsecond line")
+        key("cmd-down up")
+        assert draft() == "first line\nsecond line", "Up within multiline text moves the caret"
+        key("cmd-up shift-down")
+        assert draft() == "first line\nsecond line", "selection does not browse history"
+
+        app.send(cmd="type", text="draft with an image")
+        app.send(cmd="paste_image", path=str(ROOT / "fixtures/images/red-square.png"))
+        wait_for(lambda: app.state()["chat"]["attachments"] == ["image/png"], "the image")
+        key("up down")
+        assert draft() == "draft with an image"
+        assert app.state()["chat"]["attachments"] == ["image/png"]
+        assert len([e for e in app.state()["chat"]["entries"] if "user" in e]) == 2
+        app.send(cmd="new_chat")
+        key("up")
+        assert draft() == "", "history is scoped to the conversation"
     finally:
         app.close()
 
@@ -969,6 +1033,14 @@ def flow_history_paging():
         assert [r.rstrip(".") for r in replies] == ["alpha", "beta", "gamma"], replies
         assert next(iter(entries[0])) == "user" and next(iter(entries[-1])) == "agent", entries
         assert not app.state()["chat"]["busy"]
+        # Recall also works after restarting and loading saved transcript pages.
+        app.send(cmd="type", text="draft in reopened chat")
+        for expected in reversed(users):
+            app.send(cmd="key", keys="up")
+            app.send(cmd="frame", timed=True)
+            assert app.state()["chat"]["draft"] == expected
+        app.send(cmd="key", keys="down down down")
+        assert app.state()["chat"]["draft"] == "draft in reopened chat"
     finally:
         app.close()
 
@@ -1279,7 +1351,7 @@ def flow_projects():
         app.close()
 
 
-FLOWS = {"edit-file": flow_edit_file, "projects": flow_projects, "images": flow_images, "subagents": flow_subagents, "history-paging": flow_history_paging, "stop-mid-turn": flow_stop_mid_turn, "two-chats": flow_two_chats_at_once, "notices": flow_notices, "layout": flow_layout, "resize-panes": flow_resize_panes, "text-size": flow_text_size, "appearance": flow_appearance, "view": flow_view, "view-gallery": flow_view_gallery, "model": flow_model_picker, "code-copy": flow_code_copy, "math": flow_math, "queue": flow_queue, "status": flow_thread_status, "projects-only": flow_threads_live_in_projects, "sign-out-and-in": flow_sign_out_and_in}
+FLOWS = {"input-history": flow_input_history, "edit-file": flow_edit_file, "projects": flow_projects, "images": flow_images, "subagents": flow_subagents, "history-paging": flow_history_paging, "stop-mid-turn": flow_stop_mid_turn, "two-chats": flow_two_chats_at_once, "notices": flow_notices, "layout": flow_layout, "resize-panes": flow_resize_panes, "text-size": flow_text_size, "appearance": flow_appearance, "view": flow_view, "view-gallery": flow_view_gallery, "model": flow_model_picker, "code-copy": flow_code_copy, "math": flow_math, "queue": flow_queue, "status": flow_thread_status, "projects-only": flow_threads_live_in_projects, "sign-out-and-in": flow_sign_out_and_in}
 
 
 def main():

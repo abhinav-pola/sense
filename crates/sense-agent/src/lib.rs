@@ -25,6 +25,7 @@ use agent_client_protocol::{
 use async_channel::{Receiver, Sender};
 
 pub mod replay;
+mod skills;
 
 pub use agent_client_protocol::schema::v1 as acp;
 
@@ -60,6 +61,9 @@ pub struct Views {
     pub description: String,
     /// JSON Schema of the tool's arguments.
     pub input_schema: serde_json::Value,
+    /// Appended to fx's system prompt for every new session, so the model
+    /// reaches for views without being asked. Empty sends none.
+    pub guidance: String,
     /// Says what was shown, or what is wrong with the view: either way, the
     /// text becomes the tool result the model reads. Runs on the agent's
     /// connection, so it must not block.
@@ -307,6 +311,21 @@ fn profile_mcp_servers() -> acp::Meta {
     meta
 }
 
+/// `session/new`'s `_meta`: profile MCP servers, runtime skill instructions,
+/// and optional views guidance. fx saves the appended system prompt with the
+/// session and restores it on resume. Skill contents are never embedded here.
+fn new_session_meta(guidance: Option<&str>) -> acp::Meta {
+    let mut meta = profile_mcp_servers();
+    let mut blocks = vec![serde_json::json!({ "type": "text", "text": skills::GUIDANCE })];
+    if let Some(text) = guidance.filter(|text| !text.trim().is_empty()) {
+        blocks.push(serde_json::json!({ "type": "text", "text": text }));
+    }
+    if let Some(serde_json::Value::Object(fx)) = meta.get_mut("fx") {
+        fx.insert("systemPrompt".into(), blocks.into());
+    }
+    meta
+}
+
 async fn serve(
     transport: impl ConnectTo<Client> + 'static,
     commands: Receiver<Command>,
@@ -317,6 +336,7 @@ async fn serve(
     let notify_events = events.clone();
     let permission_events = events.clone();
     let check_view = views.as_ref().map(|views| views.check.clone());
+    let guidance: Option<Arc<str>> = views.as_ref().map(|views| views.guidance.as_str().into());
     let mut meta = acp::Meta::new();
     if let Some(views) = &views {
         meta.insert(
@@ -421,8 +441,10 @@ async fn serve(
                         let known = known.clone();
                         let models = models.clone();
                         let launch_model = launch_model.clone();
+                        let guidance = guidance.clone();
                         connection.spawn(async move {
-                            let request = NewSessionRequest::new(cwd).meta(profile_mcp_servers());
+                            let request = NewSessionRequest::new(cwd)
+                                .meta(new_session_meta(guidance.as_deref()));
                             match connection_for_task.send_request(request).block_task().await {
                                 Ok(response) => {
                                     known
@@ -615,4 +637,34 @@ fn parse_history(
         .collect();
     let older = response["nextCursor"].as_str().map(str::to_string);
     Ok((turns, older))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_session_meta_carries_views_guidance() {
+        let meta = new_session_meta(Some("Use the panel."));
+        assert_eq!(
+            meta["fx"],
+            serde_json::json!({
+                "profileMcpServers": true,
+                "systemPrompt": [
+                    {"type": "text", "text": skills::GUIDANCE},
+                    {"type": "text", "text": "Use the panel."},
+                ],
+            })
+        );
+        for none in [None, Some(""), Some("  ")] {
+            let meta = new_session_meta(none);
+            assert_eq!(
+                meta["fx"],
+                serde_json::json!({
+                    "profileMcpServers": true,
+                    "systemPrompt": [{"type": "text", "text": skills::GUIDANCE}],
+                })
+            );
+        }
+    }
 }
